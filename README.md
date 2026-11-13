@@ -24,14 +24,24 @@ Your cat starts asleep with the camera off. Click it to activate tracking, then 
 | **Pause camera** | Stops tracking and lets the cat sleep |
 | **I'm here** | Dismisses a prompt and resets the check-in interval |
 | **I drifted—reset** | Records your own acknowledgement that you drifted and resets the reminder |
+| **Take a 5-minute break** | Pauses the camera and starts a rest countdown |
+| **Snooze break reminder** | Delays it for five more minutes of work |
 | **Reminder settings** | Adjusts the reminder interval and the cat's size in a native dialog |
 | **Today's reflection** | Opens a native summary with report export |
 | **Reset position** | Brings the cat back into view |
 | **Quit** | Releases the camera and exits the app |
 
-The cat mirrors visible facial reactions: smiles, raised eyebrows, a wink, an open mouth, lowered mouth corners, or sustained closed eyes. Its reactions are smoothed so one noisy frame does not change its expression.
+The cat mirrors visible facial reactions: smiles, raised eyebrows, a wink, an open mouth, lowered mouth corners, or sustained closed eyes. It also recognizes both hands: an open palm makes it wave, thumbs-up makes it cheer, a fist gets a paw bump, a peace sign gets a wink, and the I-love-you sign gets a heart. Keep your hand inside the camera's view and hold a gesture briefly. The caption shows the recognized cue; facial and body reactions can happen together.
+
+Recognition runs at up to 12 frames per second with a short confirmation window, so brief reactions survive while single-frame noise is filtered out.
 
 The cat can offer a soft check-in after a sustained visible cue or your chosen interval, with cooldowns between prompts. Clicking it is enough to acknowledge a prompt. No-face periods, stale camera observations, and paused tracking suppress cue-based prompts.
+
+## Breaks and your daily reminder
+
+After 25 minutes of active work, the cat offers a 5-minute break. This timer is independent of face detection, so looking away does not reset it. Click the break prompt to pause tracking and start the rest countdown, or right-click to snooze it for five minutes. When the rest ends, click the cat to reactivate tracking; the camera never restarts by itself. A sleeping computer is not counted as additional work time.
+
+The daily reminder defaults to **16:20 in Europe/Amsterdam**, with the text **“4:20 — roll a joint.”** It works while camera tracking is paused and appears once per local day. Reminder settings let you edit its text and time or turn it off, as well as change the work/break durations. Purrpose must be running for reminders to appear. A short catch-up window handles waking or reopening the app near the scheduled time without showing stale reminders late at night.
 
 **A prompt is an invitation to notice, not a verdict that you are distracted.** A camera cannot tell whether you are lost in thought, concentrating, or how you feel. Explicit **I drifted—reset** acknowledgements are your own reports; facial observations remain labeled as visible expressions.
 
@@ -44,11 +54,11 @@ Use Python 3.12 and create a virtual environment in this checkout:
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-desktop.txt
-.venv/bin/python fetch_models.py --face-only
+.venv/bin/python fetch_models.py
 .venv/bin/python desktop.py
 ```
 
-The first model download needs an internet connection. Once the environment and model are installed, expression tracking works locally without an API key or cloud service. If the camera does not open, allow access in macOS camera settings and close another app using the webcam.
+The first model download installs both the face and hand models and needs an internet connection. Once installed, recognition works locally without an API key or cloud service. If the camera does not open, allow access in macOS camera settings and close another app using the webcam. Camera details shows the latest detected face and hand cue and reports a missing hand model explicitly.
 
 For an isolated test diary:
 
@@ -98,6 +108,7 @@ The desktop tests cover camera activation and pause, transparent floating-window
 | --- | --- |
 | `desktop.py` | Native desktop cat, controls, dialogs, and application lifecycle |
 | `desktop_behavior.py` | Expression reactions and gentle reminder timing |
+| `desktop_reminders.py` | Work/rest countdowns and local-time daily reminders |
 | `desktop_journal.py` | Local log of prompts, acknowledgements, and reported resets |
 | `companion_camera.py` | Local MediaPipe camera worker |
 | `companion_store.py` | Durable diary, settings, and reflection data |

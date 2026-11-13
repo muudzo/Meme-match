@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from companion_camera import CompanionCamera, expression_from_blendshapes
+from companion_camera import CompanionCamera, expression_from_blendshapes, gesture_from_categories
 
 
 def shapes(**scores):
@@ -27,6 +27,28 @@ class ExpressionMappingTests(unittest.TestCase):
 
     def test_no_coefficients_uses_geometry_fallback(self):
         self.assertIsNone(expression_from_blendshapes([]))
+
+    def test_gentle_smile_and_brow_raise_are_visible(self):
+        self.assertEqual(expression_from_blendshapes(shapes(mouthSmileLeft=.30, mouthSmileRight=.28)), "smile")
+        self.assertEqual(expression_from_blendshapes(shapes(browInnerUp=.38)), "eyebrows_raised")
+
+    def test_brief_deliberate_wink_has_a_reachable_threshold(self):
+        self.assertEqual(expression_from_blendshapes(shapes(eyeBlinkLeft=.59, eyeBlinkRight=.1)), "wink")
+
+    def test_hand_gestures_choose_the_best_supported_confident_hand(self):
+        category = lambda name, score: SimpleNamespace(category_name=name, score=score)
+        hands = [[category("None", .99), category("Thumb_Up", .7)], [category("Victory", .9)]]
+        self.assertEqual(gesture_from_categories(hands), "peace")
+        for score in (.2, math.nan, math.inf, True):
+            with self.subTest(score=score):
+                self.assertIsNone(gesture_from_categories([[category("Thumb_Up", score)]]))
+
+    def test_pausing_clears_hand_gestures_as_well_as_the_face(self):
+        camera = CompanionCamera()
+        camera._set(gesture="thumbs_up", hands_present=True, sampled_at=100)
+        camera.stop(wait=False)
+        self.assertIsNone(camera.snapshot()["gesture"])
+        self.assertFalse(camera.snapshot()["hands_present"])
 
     def test_visible_expression_vocabulary(self):
         cases = [(dict(eyeBlinkLeft=.9, eyeBlinkRight=.1), "wink"),

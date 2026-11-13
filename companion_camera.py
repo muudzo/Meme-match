@@ -7,6 +7,7 @@ planner, timer and journal work without camera dependencies.
 from __future__ import annotations
 
 import importlib.util
+from contextlib import ExitStack
 import math
 from pathlib import Path
 import threading
@@ -28,24 +29,37 @@ def expression_from_blendshapes(categories):
         return None
     left = scores.get("eyeBlinkLeft", 0)
     right = scores.get("eyeBlinkRight", 0)
-    if min(left, right) >= 0.60:
+    if min(left, right) >= 0.50:
         return "eyes_closed"
-    if max(left, right) >= 0.65 and min(left, right) <= 0.25:
+    if max(left, right) >= 0.55 and min(left, right) <= 0.28:
         return "wink"
-    if scores.get("jawOpen", 0) >= 0.45:
-        return "mouth_open"
-    if scores.get("mouthPucker", 0) >= 0.55:
+    if scores.get("mouthPucker", 0) >= 0.45:
         return "kiss"
     smile = (scores.get("mouthSmileLeft", 0) + scores.get("mouthSmileRight", 0)) / 2
-    if smile >= 0.45:
+    if smile >= 0.25 and min(scores.get("mouthSmileLeft", 0), scores.get("mouthSmileRight", 0)) >= 0.12:
         return "grin" if scores.get("jawOpen", 0) >= 0.15 else "smile"
+    if scores.get("jawOpen", 0) >= 0.33:
+        return "mouth_open"
     brow = max(scores.get("browInnerUp", 0),
                (scores.get("browOuterUpLeft", 0) + scores.get("browOuterUpRight", 0)) / 2)
-    if brow >= 0.50:
+    if brow >= 0.32:
         return "eyebrows_raised"
-    if min(scores.get("mouthFrownLeft", 0), scores.get("mouthFrownRight", 0)) >= 0.40:
+    if min(scores.get("mouthFrownLeft", 0), scores.get("mouthFrownRight", 0)) >= 0.22:
         return "frown"
     return "neutral"
+
+
+def gesture_from_categories(hands, minimum_score=0.5):
+    """Choose a supported canned gesture from either hand, ignoring uncertainty."""
+    from gesture_map import to_rule
+    candidates = []
+    for categories in hands or []:
+        for category in categories or []:
+            score = getattr(category, "score", None)
+            rule = to_rule(getattr(category, "category_name", ""))
+            if rule and isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score) and score >= minimum_score:
+                candidates.append((score, rule))
+    return max(candidates)[1] if candidates else None
 
 
 class CompanionCamera:
@@ -56,9 +70,10 @@ class CompanionCamera:
     requests shutdown without blocking a desktop event loop; status remains
     ``stopping`` until the worker has released the native camera resources.
     """
-    def __init__(self, store=None, model_path=None, device=0):
+    def __init__(self, store=None, model_path=None, device=0, gesture_model_path=None):
         self.store = store
         self.model_path = Path(model_path or Path(__file__).resolve().parent / "models/face_landmarker.task")
+        self.gesture_model_path = Path(gesture_model_path or self.model_path.parent / "gesture_recognizer.task")
         self.device = device
         self._lock = threading.RLock()
         self._stop = threading.Event()
@@ -66,6 +81,7 @@ class CompanionCamera:
         self._generation = 0
         self._restart_requested = False
         self._state = {"status": "off", "expression": None, "face_present": False,
+                       "gesture": None, "hands_present": False, "gestures_available": False,
                        "sampled_at": None,
                        "message": "Camera is paused. Activate your cat to begin local expression tracking."}
 
@@ -75,6 +91,8 @@ class CompanionCamera:
 
     def _set(self, **values):
         with self._lock:
+            if values.get("sampled_at", "unchanged") is None:
+                values.update(gesture=None, hands_present=False)
             self._state.update(values)
 
     def _publish(self, generation, stop, **values):
@@ -83,6 +101,8 @@ class CompanionCamera:
         with self._lock:
             if generation != self._generation or stop.is_set():
                 return False
+            if values.get("sampled_at", "unchanged") is None:
+                values.update(gesture=None, hands_present=False)
             self._state.update(values)
             return True
 
@@ -173,13 +193,16 @@ class CompanionCamera:
         from face_rules import classify_expression
         from recognition_state import StableSignal, metric_landmarks
 
-        signal = StableSignal(confirmation_seconds=0.35, stale_after=2.0)
+        # Two or three frames give a visible response in roughly 150–250 ms.
+        # The previous 6 fps / seven-frame vote often erased short reactions.
+        signal = StableSignal(window_size=3, min_samples=2, confirmation_seconds=0.08, stale_after=1.0)
+        hand_signal = StableSignal(window_size=3, min_samples=2, confirmation_seconds=0.09, stale_after=1.0)
         options = vision.FaceLandmarkerOptions(
             base_options=base_options.BaseOptions(model_asset_path=str(self.model_path)),
             running_mode=vision.RunningMode.VIDEO,
             num_faces=1, output_face_blendshapes=True,
-            min_face_detection_confidence=0.6, min_face_presence_confidence=0.6,
-            min_tracking_confidence=0.6,
+                min_face_detection_confidence=0.5, min_face_presence_confidence=0.5,
+                min_tracking_confidence=0.5,
         )
         if stop.is_set():
             return
@@ -195,8 +218,19 @@ class CompanionCamera:
             last_log = -math.inf
             last_timestamp = -1
             missed = 0
-            with vision.FaceLandmarker.create_from_options(options) as landmarker:
+            with ExitStack() as resources:
+                landmarker = resources.enter_context(vision.FaceLandmarker.create_from_options(options))
+                recognizer = None
+                if self.gesture_model_path.is_file():
+                    gesture_options = vision.GestureRecognizerOptions(
+                        base_options=base_options.BaseOptions(model_asset_path=str(self.gesture_model_path)),
+                        running_mode=vision.RunningMode.VIDEO, num_hands=2,
+                        min_hand_detection_confidence=0.5, min_hand_presence_confidence=0.5,
+                        min_tracking_confidence=0.5,
+                    )
+                    recognizer = resources.enter_context(vision.GestureRecognizer.create_from_options(gesture_options))
                 self._publish(generation, stop, status="running",
+                              gestures_available=recognizer is not None,
                               message="Local expression tracking is on. No images are saved.")
                 while not stop.is_set():
                     captured_at = time.monotonic()
@@ -204,6 +238,7 @@ class CompanionCamera:
                     if not ok:
                         missed += 1
                         signal.reset()
+                        hand_signal.reset()
                         self._publish(generation, stop, expression=None, face_present=False,
                                       sampled_at=None, message="Waiting for a fresh camera frame.")
                         if missed >= 5:
@@ -220,6 +255,13 @@ class CompanionCamera:
                     stamp = max(last_timestamp + 1, time.monotonic_ns() // 1_000_000)
                     last_timestamp = stamp
                     result = landmarker.detect_for_video(image, stamp)
+                    hand_result = recognizer.recognize_for_video(image, stamp) if recognizer else None
+                    hands_present = bool(hand_result and hand_result.hand_landmarks)
+                    gesture = None
+                    if hands_present:
+                        gesture = hand_signal.update(gesture_from_categories(hand_result.gestures), now=captured_at)
+                    else:
+                        hand_signal.reset()
                     present = bool(result.face_landmarks)
                     expression = None
                     if present:
@@ -232,12 +274,13 @@ class CompanionCamera:
                     else:
                         signal.reset()
                     published = self._publish(generation, stop, expression=expression,
+                                              gesture=gesture, hands_present=hands_present,
                                               face_present=present, sampled_at=captured_at,
                                               message="Local expression tracking is on. No images are saved." if present else "No face in view. Waiting quietly for you.")
                     if published and captured_at - last_log >= 1:
                         self._record(expression, present)
                         last_log = captured_at
-                    stop.wait(max(0, 0.16 - (time.monotonic() - captured_at)))
+                    stop.wait(max(0, 0.08 - (time.monotonic() - captured_at)))
         finally:
             if cap is not None:
                 cap.release()

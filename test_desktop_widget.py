@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import patch
 
@@ -69,8 +70,9 @@ class DesktopWidgetTests(unittest.TestCase):
         self.clock_patch = patch("desktop.time.monotonic", self.clock)
         self.clock_patch.start()
         self.camera = FakeCamera(self.clock)
+        self.wall = datetime(2026, 11, 13, 12, tzinfo=timezone.utc)
         self.controller = DesktopController(self.app, Path(self.temporary.name),
-                                            camera=self.camera, tray=False)
+                                            camera=self.camera, tray=False, wall_clock=lambda: self.wall)
         # Tests advance the logical clock and controller explicitly. Native
         # animation and polling timers must not introduce incidental events.
         self.controller.timer.stop()
@@ -173,6 +175,61 @@ class DesktopWidgetTests(unittest.TestCase):
         self.controller.tick()
         self.assertEqual(self.controller.widget.pose, "idle")
         self.assertIn("no face", self.controller.widget.label)
+
+    def test_hand_gesture_moves_body_while_face_keeps_smiling(self):
+        self.controller.activate()
+        self.camera.observe("smile")
+        self.camera.state.update(gesture="open_palm", hands_present=True)
+        self.controller.tick()
+        self.assertEqual(self.controller.widget.pose, "wave")
+        self.assertEqual(self.controller.widget.face_pose, "happy")
+        self.assertIn("Open palm", self.controller.widget.label)
+
+    def test_break_reminder_survives_face_detection_gaps_and_starts_rest(self):
+        self.controller.reminders.break_minutes = 5
+        self.controller.activate()
+        self.camera.observe(None, present=False)
+        for _ in range(5):
+            self.clock.advance(60)
+            self.controller.tick()
+        self.assertTrue(self.controller.has_scheduled_reminder)
+        self.assertIn("break", self.controller.widget.message)
+        self.click_cat()
+        self.assertFalse(self.controller.active)
+        self.assertFalse(self.controller.has_scheduled_reminder)
+        self.assertIn("Resting", self.controller.widget.label)
+        self.assertEqual(self.camera.stop_calls, [False])
+
+    def test_daily_reminder_works_paused_and_dismissal_never_starts_camera(self):
+        self.wall = datetime(2026, 11, 13, 15, 20, tzinfo=timezone.utc)
+        self.controller.tick()
+        self.assertIn("roll a joint", self.controller.widget.message)
+        self.assertTrue(self.controller.has_scheduled_reminder)
+        self.click_cat()
+        self.assertEqual(self.camera.start_calls, 0)
+        self.assertFalse(self.controller.has_scheduled_reminder)
+        self.assertEqual(self.controller.settings.value("last_daily_key"), "2026-11-13@16:20")
+
+    def test_camera_error_does_not_move_behavior_clock_backwards(self):
+        self.controller.activate()
+        self.clock.advance(1)
+        self.camera.state.update(status="error", message="Camera is not available")
+        self.controller.tick()
+        self.assertFalse(self.controller.active)
+        self.assertEqual(self.controller.widget.pose, "sleeping")
+
+    def test_finishing_a_break_needs_explicit_click_to_restart_camera(self):
+        self.controller.reminders.rest_minutes = 1
+        self.controller.activate()
+        self.controller.start_break()
+        calls = self.camera.start_calls
+        self.clock.advance(60)
+        self.controller.tick()
+        self.assertEqual(self.camera.start_calls, calls)
+        self.assertIn("break is over", self.controller.widget.message)
+        self.click_cat()
+        self.assertEqual(self.camera.start_calls, calls + 1)
+        self.assertTrue(self.controller.active)
 
     def test_drag_moves_and_persists_position_without_activating(self):
         widget = self.controller.widget

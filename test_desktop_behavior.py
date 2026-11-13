@@ -155,6 +155,35 @@ class CatBehaviorTests(unittest.TestCase):
         self.assertEqual(result["pose"], "idle")
         self.assertFalse(result["prompt_visible"])
 
+    def test_hand_gesture_reacts_even_when_face_is_out_of_view(self):
+        cat = self.behavior()
+        snapshot = {**frame(1, present=False), "gesture": "open_palm", "hands_present": True}
+        result = cat.update(snapshot, now=1)
+        self.assertEqual(result["pose"], "wave")
+        self.assertEqual(result["gesture"], "open_palm")
+        self.assertFalse(result["observed"])
+        self.assertFalse(result["nudge"])
+
+    def test_hand_body_reaction_keeps_the_facial_expression(self):
+        cat = self.behavior()
+        snapshot = {**frame(1, "smile"), "gesture": "open_palm", "hands_present": True}
+        result = cat.update(snapshot, now=1)
+        self.assertEqual(result["pose"], "wave")
+        self.assertEqual(result["face_pose"], "happy")
+
+    def test_hand_leaving_view_clears_its_pose(self):
+        cat = self.behavior()
+        cat.update({**frame(1), "gesture": "thumbs_up", "hands_present": True}, now=1)
+        result = cat.update(frame(2), now=2)
+        self.assertEqual(result["pose"], "idle")
+        self.assertIsNone(result["gesture"])
+
+    def test_stale_hand_frame_cannot_keep_waving(self):
+        cat = self.behavior()
+        snapshot = {**frame(1), "gesture": "open_palm", "hands_present": True}
+        self.assertEqual(cat.update(snapshot, now=1)["pose"], "wave")
+        self.assertEqual(cat.update(snapshot, now=5)["pose"], "idle")
+
     def test_out_of_order_frame_is_discarded(self):
         cat = self.behavior()
         cat.update(frame(2, "eyes_closed"), now=2)

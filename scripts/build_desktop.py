@@ -75,6 +75,8 @@ def verify_bundle(app):
     model_paths = list((app / "Contents").rglob("face_landmarker.task"))
     if not any(path.is_file() for path in model_paths):
         raise RuntimeError("The packaged FaceLandmarker model is missing.")
+    if not any(path.is_file() for path in (app / "Contents").rglob("gesture_recognizer.task")):
+        raise RuntimeError("The packaged hand-gesture model is missing.")
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app])
     return info
 
@@ -165,8 +167,8 @@ def main(argv=None):
                          ". Run .venv/bin/python -m pip install -r requirements-desktop.txt.")
         if not (ROOT / "desktop.py").is_file():
             parser.error("desktop.py is missing from this checkout.")
-        if not (ROOT / "models" / "face_landmarker.task").is_file():
-            parser.error("Run .venv/bin/python fetch_models.py --face-only before building.")
+        if not all((ROOT / "models" / name).is_file() for name in ("face_landmarker.task", "gesture_recognizer.task")):
+            parser.error("Run .venv/bin/python fetch_models.py before building to install both models.")
         create_icon()
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--distpath", DIST,
                    "--workpath", WORK / "pyinstaller"]

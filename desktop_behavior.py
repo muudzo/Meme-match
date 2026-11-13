@@ -23,6 +23,9 @@ EXPRESSION_POSES = {
     "eyes_closed": "sleeping",
 }
 
+GESTURE_POSES = {"thumbs_up": "cheer", "thumbs_down": "concerned", "peace": "wink",
+                 "open_palm": "wave", "fist": "paw", "pointing": "curious", "love_you": "heart"}
+
 MESSAGES = {
     "gentle_checkin": "A little check-in: what are you working on?",
     "eyes_rest": "Take a breath. Want a moment to reset?",
@@ -68,6 +71,7 @@ class CatBehavior:
         self._prompt_until = None
         self._reaction_until = None
         self._pose = "idle"
+        self._gesture = None
         self._observed = False
 
     @staticmethod
@@ -104,12 +108,15 @@ class CatBehavior:
         self._latched_cue = None
         self._observed = False
         self._pose = "idle"
+        self._gesture = None
 
     def _result(self, now, *, nudge=False):
         stretching = (self._observed and self._reaction_until is not None
                       and now < self._reaction_until)
         return {
-            "pose": "stretch" if stretching else self._pose,
+            "pose": "stretch" if stretching else GESTURE_POSES.get(self._gesture, self._pose),
+            "face_pose": EXPRESSION_POSES.get(self._expression, "idle"),
+            "gesture": self._gesture,
             "message": self._message,
             "reason": self._reason,
             "nudge": nudge,
@@ -161,10 +168,18 @@ class CatBehavior:
         sample = snapshot.get("sampled_at")
         fresh = (not isinstance(sample, bool) and isinstance(sample, (int, float))
                  and math.isfinite(sample) and 0 <= now - sample <= self.stale_seconds)
-        if (not self.active or snapshot.get("status") != "running"
-                or snapshot.get("face_present") is not True or not fresh):
+        if not self.active or snapshot.get("status") != "running" or not fresh:
             self._clear_evidence()
             self._clear_prompt()
+            self._evidence_floor = now
+            return self._result(now)
+
+        gesture = snapshot.get("gesture")
+        valid_gesture = gesture if snapshot.get("hands_present") is True and isinstance(gesture, str) and gesture in GESTURE_POSES else None
+        if snapshot.get("face_present") is not True:
+            self._clear_evidence()
+            self._clear_prompt()
+            self._gesture = valid_gesture
             self._evidence_floor = now
             return self._result(now)
 
@@ -181,6 +196,7 @@ class CatBehavior:
             self._evidence_floor = sample
 
         self._last_sample_at = float(sample)
+        self._gesture = valid_gesture
         self._observed = True
         expression = snapshot.get("expression")
         expression = expression if isinstance(expression, str) and expression in EXPRESSION_POSES else None

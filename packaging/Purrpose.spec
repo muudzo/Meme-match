@@ -12,6 +12,7 @@ analysis = Analysis(
     binaries=mp_binaries,
     datas=mp_datas + [
         (str(root / "models" / "face_landmarker.task"), "models"),
+        (str(root / "models" / "gesture_recognizer.task"), "models"),
         (str(root / "packaging" / "Purrpose.icns"), "packaging"),
         (str(root / "LICENSE"), "licenses"),
     ],
@@ -54,8 +55,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Purrpose",
         "CFBundleDisplayName": "Purrpose",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "1",
+        "CFBundleShortVersionString": "0.2.0",
+        "CFBundleVersion": "2",
         "LSUIElement": True,
         "NSHighResolutionCapable": True,
         "NSCameraUsageDescription": (

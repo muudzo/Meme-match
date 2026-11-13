@@ -11,7 +11,8 @@ class DesktopJournal:
         self._db.execute("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, at TEXT NOT NULL)")
 
     def record(self, kind):
-        if kind not in {"activated", "paused", "prompt", "acknowledged", "self_reported_reset"}:
+        if kind not in {"activated", "paused", "prompt", "acknowledged", "self_reported_reset",
+                        "break_reminder", "daily_reminder", "break_started"}:
             raise ValueError("Unknown desktop event")
         with self._db:
             self._db.execute("INSERT INTO events(kind, at) VALUES (?, ?)", (kind, datetime.now(timezone.utc).isoformat()))
