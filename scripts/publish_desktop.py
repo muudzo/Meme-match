@@ -6,7 +6,6 @@ The feed changes only after the release's complete assets are publicly served.
 """
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import plistlib

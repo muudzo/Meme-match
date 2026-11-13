@@ -25,8 +25,13 @@ jobs:
           persist-credentials: false
       - name: Test camera logic, reminders, and diary without a webcam
         run: |
-          if [ "$RUNNER_OS" = macOS ]; then PYTHON=python3.12; else PYTHON=python3; fi
-          "$PYTHON" -m unittest -v test_companion_camera test_companion_store \
+          if [ "$RUNNER_OS" = macOS ]; then
+            export PYENV_VERSION=3.12.10
+            PURRPOSE_PYTHON=python3.12
+          else
+            PURRPOSE_PYTHON=python3
+          fi
+          "$PURRPOSE_PYTHON" -m unittest -v test_companion_camera test_companion_store \
             test_desktop_behavior test_desktop_reminders test_face_rules \
             test_recognition_state test_desktop_updater test_desktop_release
 
@@ -39,6 +44,7 @@ jobs:
       contents: write
     env:
       QT_QPA_PLATFORM: offscreen
+      PYENV_VERSION: 3.12.10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

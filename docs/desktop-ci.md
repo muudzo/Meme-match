@@ -10,6 +10,8 @@ with label `purrpose-mac`. It lives in `~/purrpose-runner`, uses its own checkou
 and starts through a user LaunchAgent when you log in. Keep the Mac awake and
 logged in during a release. A sleeping or offline Mac leaves jobs queued;
 an interrupted job may need rerunning from GitHub Actions.
+The Mac jobs select its existing pyenv Python 3.12.10 explicitly; they do not
+depend on your interactive terminal's selected Python version.
 
 Tests initially run on the Mac too. Once the Linux runner is registered, set
 the repository variable `PURRPOSE_TEST_RUNNER` to `purrpose-tests`. The build
