@@ -31,8 +31,25 @@ def _dist(a, b):
 
 
 def classify_expression(lm):
-    face_h = _dist(lm[FOREHEAD], lm[CHIN]) or 1e-6
-    face_w = _dist(lm[LEFT_CHEEK], lm[RIGHT_CHEEK]) or 1e-6
+    """Return a visible expression label, never an inferred emotional state.
+
+    Pass metric_landmarks(...) for a camera frame with non-square dimensions.
+    Missing, non-finite or collapsed geometry is unclassified.
+    """
+    indices = (FOREHEAD, CHIN, LEFT_CHEEK, RIGHT_CHEEK, MOUTH_LEFT, MOUTH_RIGHT,
+               MOUTH_TOP, MOUTH_BOTTOM, L_EYE_OUT, L_EYE_IN, L_EYE_TOP, L_EYE_BOT,
+               R_EYE_OUT, R_EYE_IN, R_EYE_TOP, R_EYE_BOT, L_BROW, R_BROW, NASION)
+    try:
+        if any(not math.isfinite(getattr(lm[i], axis, 0.0))
+               for i in indices for axis in ("x", "y", "z")):
+            return None
+        face_h = _dist(lm[FOREHEAD], lm[CHIN])
+        face_w = _dist(lm[LEFT_CHEEK], lm[RIGHT_CHEEK])
+        if min(face_h, face_w, _dist(lm[L_EYE_OUT], lm[L_EYE_IN]),
+               _dist(lm[R_EYE_OUT], lm[R_EYE_IN])) <= 1e-8:
+            return None
+    except (AttributeError, IndexError, TypeError):
+        return None
 
     mouth_raw_h = _dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM])
     mouth_raw_w = _dist(lm[MOUTH_LEFT], lm[MOUTH_RIGHT])
@@ -40,12 +57,16 @@ def classify_expression(lm):
     mouth_w = mouth_raw_w / face_w
     mouth_aspect = mouth_raw_w / (mouth_raw_h or 1e-6)
 
-    mouth_z = (lm[MOUTH_TOP].z + lm[MOUTH_BOTTOM].z) / 2
-    pout_protrusion = (lm[NASION].z - mouth_z) / face_h
+    mouth_z = (getattr(lm[MOUTH_TOP], "z", 0.0) + getattr(lm[MOUTH_BOTTOM], "z", 0.0)) / 2
+    pout_protrusion = (getattr(lm[NASION], "z", 0.0) - mouth_z) / face_h
 
-    mouth_center_y = (lm[MOUTH_TOP].y + lm[MOUTH_BOTTOM].y) / 2
-    corner_y = (lm[MOUTH_LEFT].y + lm[MOUTH_RIGHT].y) / 2
-    mouth_droop = (corner_y - mouth_center_y) / face_h  # positive = corners sag below center: a frown
+    # Project corner displacement onto the face's own vertical axis. Image-y
+    # alone changes the frown decision when the same face tilts sideways.
+    vertical_x = (lm[CHIN].x - lm[FOREHEAD].x) / face_h
+    vertical_y = (lm[CHIN].y - lm[FOREHEAD].y) / face_h
+    corner_dx = (lm[MOUTH_LEFT].x + lm[MOUTH_RIGHT].x - lm[MOUTH_TOP].x - lm[MOUTH_BOTTOM].x) / 2
+    corner_dy = (lm[MOUTH_LEFT].y + lm[MOUTH_RIGHT].y - lm[MOUTH_TOP].y - lm[MOUTH_BOTTOM].y) / 2
+    mouth_droop = (corner_dx * vertical_x + corner_dy * vertical_y) / face_h
 
     l_ear = _dist(lm[L_EYE_TOP], lm[L_EYE_BOT]) / (_dist(lm[L_EYE_OUT], lm[L_EYE_IN]) or 1e-6)
     r_ear = _dist(lm[R_EYE_TOP], lm[R_EYE_BOT]) / (_dist(lm[R_EYE_OUT], lm[R_EYE_IN]) or 1e-6)
@@ -57,6 +78,12 @@ def classify_expression(lm):
     both_closed = l_ear < EAR_CLOSED and r_ear < EAR_CLOSED
     one_closed = (l_ear < EAR_CLOSED) != (r_ear < EAR_CLOSED)
 
+    # Deliberate eye signals remain visible while someone smiles or opens their
+    # mouth. Brief natural blinks are filtered by StableSignal at the caller.
+    if both_closed:
+        return "eyes_closed"
+    if one_closed:
+        return "wink"
     if mouth_h > MOUTH_OPEN_RATIO and mouth_aspect < TEETH_ASPECT_MIN:
         return "mouth_open"  # round wide-open mouth: shock/gasp
     if mouth_w > SMILE_WIDTH_RATIO and mouth_h > TEETH_MIN_OPEN_RATIO:
@@ -65,10 +92,6 @@ def classify_expression(lm):
         return "kiss"  # narrow mouth pushed toward the camera: pucker/pout
     if mouth_droop > SAD_DROOP_RATIO:
         return "sad"  # mouth corners sagging below center: frown
-    if both_closed:
-        return "eyes_closed"
-    if one_closed:
-        return "wink"
     if brow_raise > BROW_RAISE_RATIO:
         return "eyebrows_raised"
     if mouth_w > SMILE_WIDTH_RATIO:

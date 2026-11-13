@@ -1,202 +1,111 @@
-# Meme-match
+# Purrpose
 
-Your webcam watches your hands and your face. The moment you make a pose it recognizes — thumbs up, middle finger, mewing, a wink, a duck-face — the matching meme pops up in a second window.
+A small desktop cat that reacts with you while you work. Activate it, leave it beside your other windows, and let its expressions and occasional gentle prompts remind you to check in with yourself.
 
-No training, no dataset, no cloud calls. Two MediaPipe models produce landmark coordinates; every rule after that is plain geometry over those coordinates in a few hundred lines of Python, so every decision the program makes is readable and tunable in one file.
+Purrpose is a native, transparent, draggable desktop widget. It stays above ordinary application windows, uses the camera in the background while activated, and runs locally. You do not need to keep a browser or dashboard open.
 
-```
-Camera  ──► MediaPipe GestureRecognizer (2 hands)  ─┐
-        └─► MediaPipe FaceLandmarker (468 points)  ─┤
-                                                    ├─► rule layer ─► priority resolver ─► rolling-vote smoother ─► meme window
-   gesture_map.py / custom_gesture.py / face_rules.py / custom_match.py
-```
+## Install the desktop app
 
----
+The macOS build is **`dist/Purrpose.dmg`**. Open the disk image, drag **Purrpose.app** to **Applications**, and open it. The standalone app includes Python, its camera dependencies, and the face model.
 
-## Contents
+The current package is a local development build, signed ad hoc rather than notarized with an Apple Developer certificate. If macOS requires approval, review the app in **System Settings → Privacy & Security**. This build targets the architecture of the Mac that built it; the current development machine is Apple silicon.
 
-- [Quick start](#quick-start)
-- [What it detects](#what-it-detects)
-- [How it works](#how-it-works)
-  - [Landmarks in, rules out](#landmarks-in-rules-out)
-  - [Priority resolution](#priority-resolution)
-  - [Smoothing: rolling vote, not a debounce](#smoothing-rolling-vote-not-a-debounce)
-  - [Custom face matching](#custom-face-matching)
-- [Configuring your own memes](#configuring-your-own-memes)
-- [Tuning detection](#tuning-detection)
-- [Project layout](#project-layout)
-- [Limitations](#limitations)
-- [License](#license)
+Your cat starts asleep with the camera off. Click it to activate tracking, then allow camera access when macOS asks. Permission belongs to **Purrpose** when using the packaged app, or to your terminal/Python host when running the source.
 
----
+## Use the widget
 
-## Quick start
+| Action | What happens |
+| --- | --- |
+| Click the sleeping cat | Activates background camera tracking |
+| Click the active cat | Acknowledges a prompt and resets its reminder |
+| Drag the cat | Moves it beside your work |
+| Right-click the cat | Opens its controls |
+| Use the menu-bar cat icon | Opens the same controls without finding the widget |
+| **Pause camera** | Stops tracking and lets the cat sleep |
+| **I'm here** | Dismisses a prompt and resets the check-in interval |
+| **I drifted—reset** | Records your own acknowledgement that you drifted and resets the reminder |
+| **Reminder settings** | Adjusts the reminder interval and the cat's size in a native dialog |
+| **Today's reflection** | Opens a native summary with report export |
+| **Reset position** | Brings the cat back into view |
+| **Quit** | Releases the camera and exits the app |
 
-Requires Python 3.9+, a webcam, and a desktop session that can open OpenCV windows.
+The cat mirrors visible facial reactions: smiles, raised eyebrows, a wink, an open mouth, lowered mouth corners, or sustained closed eyes. Its reactions are smoothed so one noisy frame does not change its expression.
 
-```bash
-git clone https://github.com/Denithecreator/Meme-match.git
-cd Meme-match
-```
+The cat can offer a soft check-in after a sustained visible cue or your chosen interval, with cooldowns between prompts. Clicking it is enough to acknowledge a prompt. No-face periods, stale camera observations, and paused tracking suppress cue-based prompts.
 
-Create and activate a virtual environment:
+**A prompt is an invitation to notice, not a verdict that you are distracted.** A camera cannot tell whether you are lost in thought, concentrating, or how you feel. Explicit **I drifted—reset** acknowledgements are your own reports; facial observations remain labeled as visible expressions.
 
-```bash
-# macOS / Linux
-python3 -m venv .venv
-source .venv/bin/activate
-```
+The widget stays above ordinary windows. Other apps' exclusive fullscreen modes and operating-system surfaces may control which windows can appear over them. Purrpose does not install a login item or start the camera automatically when you sign in.
 
-```powershell
-# Windows PowerShell
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-```
+## Run from source
 
-Then install the dependencies, download the MediaPipe models, and start the app:
+Use Python 3.12 and create a virtual environment in this checkout:
 
 ```bash
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python fetch_models.py
-python main.py
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-desktop.txt
+.venv/bin/python fetch_models.py --face-only
+.venv/bin/python desktop.py
 ```
 
-`fetch_models.py` needs an internet connection and pulls the two model bundles (~12 MB total) from the official Google MediaPipe bucket into `models/`. They are not committed to the repo. If the camera does not open on macOS, allow camera access for the terminal or app running Python in **System Settings → Privacy & Security → Camera**.
+The first model download needs an internet connection. Once the environment and model are installed, expression tracking works locally without an API key or cloud service. If the camera does not open, allow access in macOS camera settings and close another app using the webcam.
 
-Two windows open: **Camera** (your mirrored feed, landmark overlay, the currently detected label at the top, and a per-hand readout at the bottom-left) and **Meme Match** (the matched image). Press `q` in the Camera window to quit.
+For an isolated test diary:
 
-The repo ships with no meme images — `memes_config.json` maps every rule to a filename, and any file that isn't there renders as a gray tile with the rule name printed on it. So a fresh clone runs immediately and doubles as a live map of what the detector is seeing. Drop your own images in and they replace the placeholders.
-
----
-
-## What it detects
-
-**Hand gestures from MediaPipe's built-in recognizer** (`gesture_map.py`) — `thumbs_up`, `thumbs_down`, `peace`, `open_palm`, `fist`, `pointing`, `love_you`.
-
-**Hand gestures from custom geometry** (`custom_gesture.py`), for poses the canned model has no class for:
-
-| Rule | What it looks for |
-|---|---|
-| `absolute_cinema` | both hands raised in the air away from the head - needs face + both hands |
-| `call_me` | thumb and pinky extended, with the other fingers curled |
-| `middle_finger` | middle finger extended, neighbours curled |
-| `finger_heart` | BTS-style thumb-and-index mini heart, one hand |
-| `full_heart` | both hands brought together into a heart |
-| `hands_on_head` | both palms near the forehead — needs face + both hands |
-| `mewing` | index fingertip tracing the jawline |
-| `finger_in_mouth` | index fingertip placed on the left or right corner of the mouth while closed |
-| `shush` | index fingertip on closed lips |
-| `open_palm` | one palm is flat and open horizontally |
-| `hand_on_ear` | open palm resting near the ear |
-| `six_seven` | the 2025 "6-7" seesaw — see [Limitations](#limitations) |
-
-`mewing`, `finger_in_mouth`, `shush` and `hand_on_ear` are hand-plus-face combos and need both visible. With a closed mouth, a fingertip on either mouth corner is `finger_in_mouth`, while a fingertip at the center of the lips is `shush`. A center touch on a parted mouth remains `finger_in_mouth`.
-
-**Face expressions from landmark geometry** (`face_rules.py`) — `mouth_open`, `smile`, `teeth`, `kiss`, `sad`, `eyebrows_raised`, `wink`, `eyes_closed`, `mlem`
-
-**Your own reference photos** (`custom_match.py`) — see [Custom face matching](#custom-face-matching).
-
-Both hands are tracked at once. The Camera window's bottom-left line (`hands: peace | middle_finger`) shows what each hand reads as, even before a meme locks in — useful when tuning.
-
----
-
-## How it works
-
-### Landmarks in, rules out
-
-MediaPipe gives normalized coordinates: 21 points per hand, 468 points for the face. Nothing downstream is learned — each rule is a ratio between distances, and every ratio is normalized by a face or hand span so it holds at any distance from the camera.
-
-Example, the whole `smile` rule: mouth corner-to-corner distance divided by cheek-to-cheek distance, above a threshold. Example, `kiss`: mouth narrower than a width threshold **and** the lips' z-depth pushed toward the camera relative to the nasion (the stable point between the eyes). Every threshold is a named constant at the top of its module.
-
-### Priority resolution
-
-Several rules can be true in the same frame — you can smile while flashing a peace sign. `main.py` resolves this most-specific-first:
-
-```
-custom face match  >  two-hand combo  >  one-hand + face combo  >  passive face expression  >  single-hand gesture
+```bash
+.venv/bin/python desktop.py --data-dir /tmp/purrpose-test
 ```
 
-The reasoning: a deliberate two-handed pose is a stronger signal of intent than a passive expression your face happens to be holding, and an expression you posed for beats a hand shape the recognizer picked up incidentally.
+The native entry point also provides `--self-test`, `--demo POSE`, and `--screenshot PATH` for no-camera verification and previews. See `.venv/bin/python desktop.py --help` for the current options.
 
-### Smoothing: rolling vote, not a debounce
+## Build the installable app
 
-Landmark detection jitters near a threshold boundary. The obvious fix — "require N identical frames in a row" — actually fails here: a single stray frame flickering to `None` or to a neighbouring rule resets the streak, and a gesture held perfectly steady can end up never accumulating enough consecutive frames to ever display.
+Build on macOS using the environment above:
 
-Instead the last `HISTORY_LEN = 7` frames are kept in a ring buffer and the most common entry wins if it holds at least `CONFIRM_RATIO = 0.55` of the window. A few flickered frames are absorbed as long as one match still dominates, and confirmation typically takes 2–3 frames rather than a fixed hold count — more reliable *and* faster than the naive version.
-
-### Custom face matching
-
-`custom_memes` in the config lets you supply reference photos of yourself pulling a specific face. At startup, `custom_match.py` runs the face landmarker over each reference and stores a normalized geometric signature; at runtime your live face is compared against those signatures.
-
-This matches **expression geometry, not identity** — nothing about who you are is encoded, and any face shape works with your own references. Reference images stay on your machine; nothing is uploaded.
-
----
-
-## Configuring your own memes
-
-Everything lives in `memes_config.json`. Two ways to trigger an image:
-
-**1. `gesture_rules` / `face_rules`** — point `image` at a file. `rule` must be one of the names listed above; `name` is just the label drawn on the placeholder tile.
-
-```json
-{ "name": "thumbs_up", "rule": "thumbs_up", "image": "memes/images/approve.jpg" }
+```bash
+.venv/bin/python scripts/build_desktop.py --dmg
 ```
 
-**2. `custom_memes`** — no rule name, just reference photos of the expression you want to trigger it:
+Outputs:
 
-```json
-{
-  "name": "my_disappointed_face",
-  "image": "memes/images/disappointed.png",
-  "refs": ["memes/refs/disappointed/ref1.jpg", "memes/refs/disappointed/ref2.jpg"]
-}
+- `dist/Purrpose.app` — standalone desktop app.
+- `dist/Purrpose.dmg` — drag-to-Applications disk image.
+
+Omit `--dmg` to build only the app. Use `--dmg-only` to recreate the disk image from an existing app without rebuilding. The build script validates the app's camera permission metadata, accessory-app settings, bundled model, and code signature. It never installs dependencies or changes an app already in Applications.
+
+The package uses a one-folder app bundle through [PyInstaller](https://pyinstaller.org/en/stable/spec-files.html). This retains the model and native camera/Qt libraries inside the application rather than requiring the source checkout at runtime. Build on the target Mac architecture; an Apple-silicon build is not presented as a universal Intel/ARM package.
+
+## Local records and camera behavior
+
+The native app stores settings and its diary under your macOS application-support directory, normally `~/Library/Application Support/Purrpose`. `--data-dir` overrides that location. Camera frames are processed in memory and discarded; photographs, video, and audio are not saved or uploaded.
+
+The camera is active only after you activate the cat. It continues processing while you use other applications. Pausing or quitting stops the worker and releases the camera. Closing a reflection or settings dialog does not pause the cat.
+
+Reflections summarize the records actually collected, distinguish visible expressions from your own check-ins, and leave camera gaps unobserved. They do not describe application usage, read your work, diagnose your mood, or claim to measure attention. Finder-launched app diagnostics are written to `~/Library/Logs/Purrpose/runtime.log`; model cache files use `~/Library/Caches/Purrpose`.
+
+## Tests
+
+```bash
+.venv/bin/python -m unittest discover -v
+.venv/bin/python desktop.py --self-test
 ```
 
-More reference photos across different lighting and angles gives a more robust match. Images are loaded once at startup, so restart after editing.
+The desktop tests cover camera activation and pause, transparent floating-window behavior, expression reactions, reminder cooldowns, stale/no-face observations, recognition stability, geometry, and local diary persistence. Automated tests use synthetic camera observations; live camera behavior requires a manual check after activation.
 
----
+## Source layout
 
-## Tuning detection
-
-If a rule fires too eagerly or not at all, change the threshold — not the smoothing. The smoothing constants in `main.py` compensate for jitter; they can't fix a threshold that's simply in the wrong place.
-
-- Face rules: `MOUTH_OPEN_RATIO`, `SMILE_WIDTH_RATIO`, `EAR_CLOSED`, `BROW_RAISE_RATIO`, `TEETH_ASPECT_MIN`, `TEETH_MIN_OPEN_RATIO`, `KISS_MAX_WIDTH_RATIO`, `KISS_PROTRUSION_RATIO`, `SAD_DROOP_RATIO` — all at the top of `face_rules.py`.
-- Hand rules: the ratio constants at the top of `custom_gesture.py`.
-
-Watch the bottom-left `hands:` readout and the top-left label while you adjust — they show raw per-frame classification, so you can see a threshold flip in real time.
-
----
-
-## Project layout
-
-| File | Role |
-|---|---|
-| `main.py` | capture loop, model setup, priority resolution, smoothing, both windows |
-| `gesture_map.py` | MediaPipe's built-in gesture category names → rule names |
-| `custom_gesture.py` | geometry rules for one-hand, two-hand, and hand+face poses |
-| `face_rules.py` | expression classification from the 468-point face mesh |
-| `custom_match.py` | reference-photo signature building and matching |
-| `memes_config.json` | rule → image mapping |
-| `fetch_models.py` | downloads the two `.task` model bundles |
-
----
-
-## Limitations
-
-Worth knowing before you file a bug:
-
-- **`six_seven` is approximate.** The real trend is a repeated seesaw *motion*; this detector is single-frame, so it approximates it as one open hand caught noticeably higher than the other. Less reliable than the pose-based rules by construction.
-- **`teeth` doesn't see teeth.** It's a wide-and-open mouth geometry proxy for a grin, so a wide open-mouthed laugh and genuine shock can read the same. Nudge `TEETH_ASPECT_MIN` / `TEETH_MIN_OPEN_RATIO` for your face.
-- **`kiss` leans on monocular depth.** MediaPipe's z-estimates from a single camera are noisy; the pout rule is the most lighting-sensitive of the set.
-- **Thresholds are per-face.** Defaults were tuned on one face under one lighting setup. Expect to adjust a couple of constants.
-- **Windows-tuned window placement.** `main.py` queries screen width through `ctypes.windll` and falls back to 1920 elsewhere — the app still runs fine on macOS/Linux, the second window may just land in a less convenient spot. The `cv2.CAP_DSHOW` capture backend is likewise a Windows hint.
-- **One face at a time.** `num_faces=1`, `num_hands=2`.
-
----
+| File | Purpose |
+| --- | --- |
+| `desktop.py` | Native desktop cat, controls, dialogs, and application lifecycle |
+| `desktop_behavior.py` | Expression reactions and gentle reminder timing |
+| `desktop_journal.py` | Local log of prompts, acknowledgements, and reported resets |
+| `companion_camera.py` | Local MediaPipe camera worker |
+| `companion_store.py` | Durable diary, settings, and reflection data |
+| `recognition_state.py` | Stable signals and aspect-corrected geometry |
+| `packaging/Purrpose.spec` | Standalone macOS app bundle configuration |
+| `packaging/cat.svg` | Source icon used to generate the application icon |
+| `scripts/build_desktop.py` | App icon, build, signature validation, and optional DMG |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
-Meme images are not included in this repository; whatever you drop into `memes/images/` stays yours and stays local.
+The source is MIT licensed; see [LICENSE](LICENSE). Qt, MediaPipe, OpenCV, and other bundled dependencies retain their own licenses. Meme images are not included in the desktop widget's application bundle.
