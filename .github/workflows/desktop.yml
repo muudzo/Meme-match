@@ -1,0 +1,65 @@
+name: Desktop cat
+
+# These machines execute only the owner's branch, never fork PR code.
+on:
+  push:
+    branches: [tates-cat]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: purrpose-desktop-release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.repository == 'muudzo/Meme-match'
+    # Bootstrap on the Mac until SSH access allows registering the Linux runner.
+    # Set repository variable PURRPOSE_TEST_RUNNER=purrpose-tests to move tests.
+    runs-on: [self-hosted, "${{ vars.PURRPOSE_TEST_RUNNER || 'purrpose-mac' }}"]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test camera logic, reminders, and diary without a webcam
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then PYTHON=python3.12; else PYTHON=python3; fi
+          "$PYTHON" -m unittest -v test_companion_camera test_companion_store \
+            test_desktop_behavior test_desktop_reminders test_face_rules \
+            test_recognition_state test_desktop_updater test_desktop_release
+
+  macos:
+    if: github.repository == 'muudzo/Meme-match'
+    needs: test
+    runs-on: [self-hosted, macOS, ARM64, purrpose-mac]
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Prepare isolated build environment
+        run: |
+          python3.12 -m venv .venv
+          .venv/bin/python -m pip install -r requirements-desktop.txt
+          .venv/bin/python fetch_models.py
+          .venv/bin/python scripts/fetch_sparkle.py
+      - name: Test native widget without camera access
+        run: .venv/bin/python -m unittest -v test_desktop_widget test_desktop_updater
+      - name: Build signed-update-capable app
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          export PURRPOSE_BUILD_NUMBER="$((100 + RUN_NUMBER * 10 + RUN_ATTEMPT))"
+          .venv/bin/python scripts/build_desktop.py --updates --dmg
+          dist/Purrpose.app/Contents/MacOS/Purrpose --self-test
+      - name: Sign and publish update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .venv/bin/python scripts/publish_desktop.py

@@ -1,9 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Standalone macOS accessory app; build through scripts/build_desktop.py."""
 from pathlib import Path
+import json
+import os
 from PyInstaller.utils.hooks import collect_all
 
 root = Path(SPECPATH).resolve().parent
+updates = json.loads((root / "packaging" / "updates.json").read_text())
+build_number = os.environ.get("PURRPOSE_BUILD_NUMBER", "3")
+if not build_number.isdecimal() or int(build_number) < 3:
+    raise ValueError("PURRPOSE_BUILD_NUMBER must be an integer of at least 3")
+update_info = {}
+if os.environ.get("PURRPOSE_UPDATES") == "1":
+    update_info = {
+        "SUFeedURL": updates["feed_url"],
+        "SUPublicEDKey": updates["public_key"],
+        "SUEnableAutomaticChecks": True,
+        "SUAutomaticallyUpdate": True,
+        "SUScheduledCheckInterval": 3600,
+        "SUVerifyUpdateBeforeExtraction": True,
+        "SURequireSignedFeed": True,
+        "SUEnableSystemProfiling": False,
+    }
 mp_datas, mp_binaries, mp_imports = collect_all("mediapipe")
 
 analysis = Analysis(
@@ -55,9 +73,11 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Purrpose",
         "CFBundleDisplayName": "Purrpose",
-        "CFBundleShortVersionString": "0.2.0",
-        "CFBundleVersion": "2",
+        "CFBundleShortVersionString": updates["version"],
+        "CFBundleVersion": build_number,
+        **update_info,
         "LSUIElement": True,
+        "LSMinimumSystemVersion": "13.0",
         "NSHighResolutionCapable": True,
         "NSCameraUsageDescription": (
             "When you activate your desktop cat, Purrpose uses the camera locally "

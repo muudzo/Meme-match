@@ -153,11 +153,16 @@ def main(argv=None):
     parser.add_argument("--dmg", action="store_true", help="Also create dist/Purrpose.dmg for drag-to-Applications installation.")
     parser.add_argument("--dmg-only", action="store_true", help="Package an already-built dist/Purrpose.app without rebuilding it.")
     parser.add_argument("--clean", action="store_true", help="Ask PyInstaller to discard its analysis cache.")
+    parser.add_argument("--updates", action="store_true", help="Embed Sparkle and enable signed automatic updates (fetch_sparkle.py first).")
     args = parser.parse_args(argv)
     if sys.platform != "darwin":
         parser.error("This build produces a macOS .app; run it on macOS.")
     DIST.mkdir(exist_ok=True)
     WORK.mkdir(parents=True, exist_ok=True)
+    if args.updates and not (ROOT / "build" / "sparkle" / "Sparkle.framework" / "Sparkle").is_file():
+        parser.error("Run scripts/fetch_sparkle.py before building with --updates.")
+    if args.updates and args.dmg_only:
+        parser.error("--updates requires a fresh build; omit --dmg-only.")
     app = DIST / "Purrpose.app"
     if not args.dmg_only:
         missing = [name for name in ("PySide6", "PyInstaller", "mediapipe", "cv2", "numpy")
@@ -175,7 +180,15 @@ def main(argv=None):
         if args.clean:
             command.append("--clean")
         command.append(ROOT / "packaging" / "Purrpose.spec")
-        run(command, cwd=ROOT)
+        environment = dict(os.environ, PURRPOSE_UPDATES="1" if args.updates else "0")
+        run(command, cwd=ROOT, env=environment)
+        if args.updates:
+            framework = ROOT / "build" / "sparkle" / "Sparkle.framework"
+            run(["/usr/bin/ditto", framework, app / "Contents" / "Frameworks" / "Sparkle.framework"])
+            run(["/usr/bin/ditto", ROOT / "build" / "sparkle" / "LICENSE", app / "Contents" / "Resources" / "licenses" / "Sparkle.txt"])
+            # The upstream framework's signed helpers remain intact. Seal our
+            # enclosing bundle after embedding it; no deep re-sign of helpers.
+            run(["/usr/bin/codesign", "--force", "--sign", "-", app])
     verify_bundle(app)
     print(f"\nBuilt {app}")
     if args.dmg or args.dmg_only:

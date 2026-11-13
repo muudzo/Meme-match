@@ -70,6 +70,13 @@ The native entry point also provides `--self-test`, `--demo POSE`, and `--screen
 
 ## Build the installable app
 
+Pushes to **`tates-cat`** can build and publish signed automatic updates using
+your self-hosted runners. The cat's **Check for updates…** menu uses Sparkle;
+background checks run hourly and downloaded updates install when the app
+quits. Existing 0.2 installations need one manual upgrade to enable this.
+See [desktop CI setup](docs/desktop-ci.md) for runner status, Linux setup, and
+signing-key requirements.
+
 Build on macOS using the environment above:
 
 ```bash
@@ -82,6 +89,10 @@ Outputs:
 - `dist/Purrpose.dmg` — drag-to-Applications disk image.
 
 Omit `--dmg` to build only the app. Use `--dmg-only` to recreate the disk image from an existing app without rebuilding. The build script validates the app's camera permission metadata, accessory-app settings, bundled model, and code signature. It never installs dependencies or changes an app already in Applications.
+
+To include the native updater, first run `.venv/bin/python scripts/fetch_sparkle.py`,
+then build with `--updates --dmg`. Local builds without `--updates` do not
+contact the update service.
 
 The package uses a one-folder app bundle through [PyInstaller](https://pyinstaller.org/en/stable/spec-files.html). This retains the model and native camera/Qt libraries inside the application rather than requiring the source checkout at runtime. Build on the target Mac architecture; an Apple-silicon build is not presented as a universal Intel/ARM package.
 

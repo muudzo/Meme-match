@@ -18,6 +18,7 @@ def arguments(argv=None):
     parser.add_argument("--screenshot", type=Path, help="Render a transparent preview without opening a camera.")
     parser.add_argument("--demo", choices=("idle", "sleeping", "happy", "curious", "concerned", "stretch", "surprised", "wink", "wave", "cheer", "heart", "paw"), default="sleeping")
     parser.add_argument("--self-test", action="store_true", help="Verify the native widget and packaged model without webcam access.")
+    parser.add_argument("--updater-self-test", action="store_true", help="Verify the packaged native updater without activating the camera (macOS Cocoa session).")
     return parser.parse_args(argv)
 
 
@@ -358,6 +359,8 @@ class DesktopController:
         self.menu.addAction("Today's reflection…", self.reflection)
         self.menu.addAction("Camera details…", self.camera_details)
         self.menu.addAction("Reset position", self.reset_position)
+        self.update_action = self.menu.addAction("Check for updates…")
+        self.update_action.setEnabled(False)
         self.menu.addSeparator()
         self.menu.addAction("Quit Purrpose", self.quit)
         pixmap = QPixmap(64, 64)
@@ -705,6 +708,13 @@ def main(argv=None):
     app.setApplicationName("Purrpose")
     app.setOrganizationName("Purrpose")
     app.setQuitOnLastWindowClosed(False)
+    if args.updater_self_test:
+        from desktop_updater import DesktopUpdater
+        updater = DesktopUpdater()
+        updater.start()
+        ready = updater.can_check
+        print(json.dumps({"native_updater": ready, "camera_off": True, "error": updater.error}), flush=True)
+        return 0 if ready else 1
     if args.self_test:
         self_test(app)
         return 0
@@ -728,6 +738,14 @@ def main(argv=None):
     app._purrpose_instance_lock = instance_lock
     app.aboutToQuit.connect(instance_lock.unlock)
     controller = DesktopController(app, data_dir)
+    from desktop_updater import DesktopUpdater
+    updater = DesktopUpdater()
+    app._purrpose_updater = updater
+    controller.update_action.triggered.connect(updater.check)
+    controller.menu.aboutToShow.connect(lambda: controller.update_action.setEnabled(updater.can_check))
+    if updater.error:
+        print(f"Updater unavailable: {updater.error}", file=sys.stderr, flush=True)
+    QTimer.singleShot(0, updater.start)
     # Keep the controller alive for the entire native event loop.
     app._purrpose_controller = controller
     return app.exec()
